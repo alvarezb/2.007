@@ -1,5 +1,5 @@
 #include <Servo.h>
-#include <PS2X_lib.h>  //for v1.6
+#include <PS2X_lib.h>
 
 #define PHOTOR A0
 #define WINCHSERVO 2
@@ -10,7 +10,6 @@
 #define RIGHTSERVO 7
 #define motorControl1 10
 #define motorControl2 11
-#define LED 13
 
 //REMAINING PINS:
 //0,1 : dont use if possible
@@ -33,6 +32,7 @@
 #define LIGHTCHANGETHRESHOLD 180
 int relativeLightValue;
 int PS2PINS[]  = {A4,A2,A3,A1}; //{CLOCK=blue, COMMAND=orange, ATTENTION=yellow, DATA=brown}
+PS2X ps2x; // create PS2 Controller Class
 
 Servo leftWheel;
 Servo rightWheel;
@@ -46,17 +46,35 @@ void setup() {
   winch.attach(WINCHSERVO);
   stretcherAngle.attach(STRETCHERANGLESERVO);
   
-  pinMode(LED, OUTPUT);
   pinMode(PHOTOR, INPUT);
-  Serial.begin(9600);
+  Serial.begin(57600);
   delay(100);
   relativeLightValue = analogRead(PHOTOR);
   stretcherAngle.write(120);
+  
+  setupPS2controller();
 }
 
 void loop() {
-  waitForLight();
-  winch.write(W_STOP);
+  //winch.write(W_STOP); //initialize to running slightly up
+  //waitForLight();
+  //getWrench(); //autonomously drive and attempt to get wrench
+  //enterRCmode(); //set to RC control
+  PS2control();
+}
+
+void waitForLight()
+{
+  double lightValue = analogRead(PHOTOR);
+  while(!(abs(lightValue-relativeLightValue) > LIGHTCHANGETHRESHOLD))
+  {
+    lightValue = analogRead(PHOTOR);
+    delay(10);
+  }
+}
+
+void getWrench()
+{
   forward();
   delay(800);
   spinRight();
@@ -73,18 +91,6 @@ void loop() {
   }
   stopDriving();
   liftWrench();
-  //enterRCmode();
-  delay(10000000);
-}
-
-void waitForLight()
-{
-  double lightValue = analogRead(PHOTOR);
-  while(!(abs(lightValue-relativeLightValue) > LIGHTCHANGETHRESHOLD))
-  {
-    lightValue = analogRead(PHOTOR);
-    delay(10);
-  }
 }
 
 void followEdge(int distFromEdge, int endDist)
@@ -224,6 +230,45 @@ void halfRight()
   leftWheel.write(FORWARD_L);
 }
 
+void driveCustom(int left, int right)
+{
+  leftWheel.write(left);
+  rightWheel.write(right);
+}
+
+void mapAndDrive(byte left, byte right)
+{
+  Serial.println("left:" + (String)left + " right:" + (String)right);
+  int l;
+  int r;
+  if(left < 50)
+  {
+    l = FORWARD_L;
+  }
+  else if(left > 205)
+  {
+    l = BACKWARDS_L;
+  }
+  else// if(left <
+  {
+    l = LEFTZERO;
+  }
+
+  if(right < 50)
+  {
+    r = FORWARD_R;
+  }
+  else if (right > 205)
+  {
+    r = BACKWARDS_R;
+  }
+  else
+  {
+    r = RIGHTZERO;
+  }
+  driveCustom(l, r);
+}
+
 void stopDriving()
 {
   rightWheel.write(RIGHTZERO);
@@ -248,9 +293,133 @@ void stopStretcher()
   digitalWrite(motorControl2, LOW);
 }
 
+
 void enterRCmode()
 {
   pinMode(LEFTSERVO, INPUT);
   pinMode(RIGHTSERVO, INPUT);
   pinMode(WINCHSERVO, INPUT);
+}
+
+void setupPS2controller()
+{
+  int error;
+  byte type;
+  
+  //config_gamepad(clock, command, attention, data, Pressures?, Rumble?)
+  error = ps2x.config_gamepad(PS2PINS[0],PS2PINS[1],PS2PINS[2],PS2PINS[3], false, false);
+  
+  if(error == 0){
+    Serial.println("Found Controller, configured successful");
+    Serial.println("Try out all the buttons, X will vibrate the controller, faster as you press harder;");
+    Serial.println("holding L1 or R1 will print out the analog stick values.");
+  }
+  else if(error == 1)
+    Serial.println("No controller found, check wiring, see readme.txt to enable debug. visit www.billporter.info for troubleshooting tips");
+   
+  else if(error == 2)
+    Serial.println("Controller found but not accepting commands. see readme.txt to enable debug. Visit www.billporter.info for troubleshooting tips");
+   
+  else if(error == 3)
+    Serial.println("Controller refusing to enter Pressures mode, may not support it. ");
+   
+   //Serial.print(ps2x.Analog(1), HEX);
+   
+   type = ps2x.readType(); 
+     switch(type) {
+       case 0:
+        Serial.println("Unknown Controller type");
+       break;
+       case 1:
+        Serial.println("DualShock Controller Found");
+       break;
+       case 2:
+         Serial.println("GuitarHero Controller Found");
+       break;
+     }
+}
+
+
+void PS2control()
+{
+  while(true) //run this forever
+  {
+    ps2x.read_gamepad();          //read controller. changes are only recognized here
+    
+    /*
+    //BUTTON NAMES
+    PSB_L3
+    PSB_L2
+    PSB_R3
+    PSB_R2
+    
+    PSB_PAD_LEFT
+    PSB_PAD_RIGHT
+    PSB_PAD_UP
+    PSB_PAD_DOWN
+    
+    PSB_START
+    PSB_SELECT
+    
+    PSAB_BLUE
+    PSB_GREEN
+    PSB_PINK
+    PSB_RED
+    
+    //BUTTON FUNCTIONS
+    ps2x.ButtonPressed(button)    //true if just pressed
+    ps2x.Button(button)           //true if currently pressed
+    ps2x.NewButtonState)(button)  //true if state just changed
+    
+    
+    
+    //ANALOG NAMES
+    PSS_LY
+    PSS_LX
+    PSS_RY
+    PSS_RX
+    
+    //ANALOG FUNCTIONS 
+    ps2x.Analog(button/stick) //byte, pressure
+    */
+    
+    
+    //wrench lift
+    if(ps2x.Button(PSB_GREEN))
+    {
+      Serial.println("Triangle pressed");
+      winch.write(W_DOWN);
+      
+    }
+    else if(ps2x.Button(PSB_RED))
+    {
+      Serial.println("Circle pressed");
+      winch.write((W_STOP-W_UP)/2); //go up half speed
+    }
+    else
+    {
+      winch.write(W_STOP);
+    }
+    
+    
+    //stretcher
+    if(ps2x.Button(PSB_PINK))
+    {
+      Serial.println("Square pressed");
+      openStretcher();
+      
+    }
+    else if(ps2x.Button(PSB_BLUE))
+    {
+      Serial.println("X pressed");
+      closeStretcher(); //go up half speed
+    }
+    else
+    {
+      stopStretcher();;
+    }
+    
+    mapAndDrive(ps2x.Analog(PSS_LY), ps2x.Analog(PSS_RY));
+    delay(10);
+  }
 }
