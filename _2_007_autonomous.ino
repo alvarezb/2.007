@@ -8,14 +8,16 @@
 #define SIDEPINGSENSOR 5 //hooked up to a servo pin
 #define LEFTSERVO 6
 #define RIGHTSERVO 7
-#define motorControl1 10
-#define motorControl2 11
+#define STRETCHERMOTOR 8
+#define SIDEPIN 12
+#define LED 13
 
-//REMAINING PINS:
-//0,1 : dont use if possible
-//8,9 : servo connections
-//12  : nothing special
-//A5-7: analog
+//REMAINING EMPTY PINS:
+//0,1    : dont use if possible, for main TX/RX
+//8      : servo connection
+//10,11  : nothing special
+//13     : nothing special
+//A5-A7  : analog
 
 //winch constants
 #define W_UP 0
@@ -29,7 +31,25 @@
 #define BACKWARDS_R 180
 #define LEFTZERO 98
 #define RIGHTZERO 95
+
+//amount the light value has to change before robot considers LED to be lit
 #define LIGHTCHANGETHRESHOLD 180
+
+//adjust the rubber band stretcher angle
+#define STRETCHERBACK 120
+#define STRETCHEROUT 40
+
+//motor stretching controls
+#define MOTOROUT 1000
+#define MOTORIN 2000
+#define MOTORSTOP 1500
+
+//#################################################
+//CHANGE THIS VALUE
+boolean leftSide = false;
+//################################################
+
+
 int relativeLightValue;
 int PS2PINS[]  = {A4,A2,A3,A1}; //{CLOCK=blue, COMMAND=orange, ATTENTION=yellow, DATA=brown}
 PS2X ps2x; // create PS2 Controller Class
@@ -38,6 +58,7 @@ Servo leftWheel;
 Servo rightWheel;
 Servo winch;
 Servo stretcherAngle;
+Servo stretcherMotor;
 
 void setup() {
   //set up servos
@@ -45,21 +66,37 @@ void setup() {
   rightWheel.attach(RIGHTSERVO);
   winch.attach(WINCHSERVO);
   stretcherAngle.attach(STRETCHERANGLESERVO);
+  stretcherMotor.attach(STRETCHERMOTOR);
   
-  pinMode(PHOTOR, INPUT);
+  pinMode(LEFTSERVO, OUTPUT);
+  pinMode(RIGHTSERVO, OUTPUT);
+  pinMode(WINCHSERVO, OUTPUT);
+  pinMode(STRETCHERANGLESERVO, OUTPUT);
+  pinMode(STRETCHERMOTOR, OUTPUT);
+  pinMode(SIDEPIN, INPUT);
+  pinMode(LED, OUTPUT);
+  digitalWrite(LED, LOW);
   Serial.begin(57600);
   delay(100);
   relativeLightValue = analogRead(PHOTOR);
-  stretcherAngle.write(120);
-  
+  stretcherAngle.write(STRETCHERBACK);
+  stretcherMotor.writeMicroseconds(MOTORSTOP);
   setupPS2controller();
+  digitalWrite(LED, HIGH);
 }
 
 void loop() {
-  //winch.write(W_STOP); //initialize to running slightly up
-  //waitForLight();
-  //getWrench(); //autonomously drive and attempt to get wrench
-  //enterRCmode(); //set to RC control
+  waitForLight();
+  stretcherMotor.writeMicroseconds(MOTOROUT);
+  if(leftSide == true)
+  {
+    getWrenchLeft(); //autonomously drive and attempt to get wrench
+  }
+  else
+  {
+    getWrenchRight();
+  }
+  stretcherMotor.writeMicroseconds(MOTORSTOP);
   PS2control();
 }
 
@@ -73,7 +110,7 @@ void waitForLight()
   }
 }
 
-void getWrench()
+void getWrenchLeft()
 {
   forward();
   delay(800);
@@ -86,6 +123,28 @@ void getWrench()
   delay(2100);
   backwards();
   while(pingDistanceCM(FRONTPINGSENSOR) < 44)
+  {
+    //do nothing. Ping already has a delay 100ms built in
+  }
+  stopDriving();
+  liftWrench();
+}
+
+void getWrenchRight()
+{
+  forward();
+  delay(800);
+  spinRight();
+  delay(2000);
+  backwards();
+  delay(14000); //10 seconds
+  //now we should be against the far wall
+  forward();
+  delay(1800);
+  spinRight();
+  delay(1700);
+  backwards();
+  while(pingDistanceCM(FRONTPINGSENSOR) < 34)
   {
     //do nothing. Ping already has a delay 100ms built in
   }
@@ -238,7 +297,7 @@ void driveCustom(int left, int right)
 
 void mapAndDrive(byte left, byte right)
 {
-  Serial.println("left:" + (String)left + " right:" + (String)right);
+  //Serial.println("left:" + (String)left + " right:" + (String)right);
   int l;
   int r;
   if(left < 50)
@@ -275,24 +334,6 @@ void stopDriving()
   leftWheel.write(LEFTZERO);
 }
 
-void openStretcher()
-{
-  digitalWrite(motorControl1, HIGH);
-  digitalWrite(motorControl2, LOW);
-}
-
-void closeStretcher()
-{
-  digitalWrite(motorControl1, LOW);
-  digitalWrite(motorControl2, HIGH);
-}
-
-void stopStretcher()
-{
-  digitalWrite(motorControl1, LOW);
-  digitalWrite(motorControl2, LOW);
-}
-
 
 void enterRCmode()
 {
@@ -311,47 +352,51 @@ void setupPS2controller()
   
   if(error == 0){
     Serial.println("Found Controller, configured successful");
-    Serial.println("Try out all the buttons, X will vibrate the controller, faster as you press harder;");
-    Serial.println("holding L1 or R1 will print out the analog stick values.");
   }
   else if(error == 1)
     Serial.println("No controller found, check wiring, see readme.txt to enable debug. visit www.billporter.info for troubleshooting tips");
    
   else if(error == 2)
     Serial.println("Controller found but not accepting commands. see readme.txt to enable debug. Visit www.billporter.info for troubleshooting tips");
-   
-  else if(error == 3)
-    Serial.println("Controller refusing to enter Pressures mode, may not support it. ");
-   
+
    //Serial.print(ps2x.Analog(1), HEX);
    
    type = ps2x.readType(); 
-     switch(type) {
-       case 0:
-        Serial.println("Unknown Controller type");
-       break;
-       case 1:
-        Serial.println("DualShock Controller Found");
-       break;
-       case 2:
-         Serial.println("GuitarHero Controller Found");
-       break;
-     }
+   switch(type) {
+     case 0:
+      Serial.println("Unknown Controller type");
+      setupPS2controller();
+      break;
+     case 1:
+      Serial.println("DualShock Controller Found");
+     break;
+   }  
+   ps2x.read_gamepad();
+   if(ps2x.Analog(PSS_LY) == 255)
+   {
+     Serial.println("value was 255 (AKA controller not set up correctly, re-running setup");
+     setupPS2controller();
+   }
 }
 
 
 void PS2control()
 {
+  int stretcherAnglePos = (STRETCHERBACK + STRETCHEROUT)/2.0;
   while(true) //run this forever
   {
     ps2x.read_gamepad();          //read controller. changes are only recognized here
     
     /*
+    //INFORMATION FOR WRITING ADDITIONAL FUNCTIONS
+    
     //BUTTON NAMES
-    PSB_L3
+    PSB_L1
     PSB_L2
-    PSB_R3
+    PSB_L3
+    PSB_R1
     PSB_R2
+    PSB_R3
     
     PSB_PAD_LEFT
     PSB_PAD_RIGHT
@@ -383,15 +428,14 @@ void PS2control()
     ps2x.Analog(button/stick) //byte, pressure
     */
     
-    
     //wrench lift
-    if(ps2x.Button(PSB_GREEN))
+    if(ps2x.Button(PSB_R2))
     {
       Serial.println("Triangle pressed");
       winch.write(W_DOWN);
       
     }
-    else if(ps2x.Button(PSB_RED))
+    else if(ps2x.Button(PSB_R1))
     {
       Serial.println("Circle pressed");
       winch.write((W_STOP-W_UP)/2); //go up half speed
@@ -403,21 +447,40 @@ void PS2control()
     
     
     //stretcher
-    if(ps2x.Button(PSB_PINK))
+    if(ps2x.Button(PSB_L2))
     {
-      Serial.println("Square pressed");
-      openStretcher();
+      Serial.println("Left dpad pressed");
+      stretcherMotor.writeMicroseconds(MOTOROUT);
       
     }
-    else if(ps2x.Button(PSB_BLUE))
+    else if(ps2x.Button(PSB_L1))
     {
-      Serial.println("X pressed");
-      closeStretcher(); //go up half speed
+      Serial.println("Right dpad pressed");
+      stretcherMotor.writeMicroseconds(MOTORIN);
     }
     else
     {
-      stopStretcher();;
+      stretcherMotor.writeMicroseconds(MOTORSTOP);
     }
+    
+    //stretcher angle
+    if(ps2x.Button(PSB_PAD_UP))
+    {
+      Serial.println("up dpad pressed");
+      if(stretcherAnglePos > STRETCHEROUT)
+      {
+        stretcherAnglePos -= 1;
+      }
+    }
+    else if(ps2x.Button(PSB_PAD_DOWN))
+    {
+      Serial.println("down dpad pressed");
+      if(stretcherAnglePos < STRETCHERBACK)
+      {
+        stretcherAnglePos += 1;
+      }
+    }
+    stretcherAngle.write(stretcherAnglePos);
     
     mapAndDrive(ps2x.Analog(PSS_LY), ps2x.Analog(PSS_RY));
     delay(10);
